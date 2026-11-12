@@ -11,7 +11,7 @@
   <header>
     <div>
       <h1>Epoxy Floor Visualizer</h1>
-      <p>Live camera preview · choose a texture · outline the floor</p>
+      <p>Live camera preview · AI floor segmentation · epoxy finishes</p>
     </div>
     <span class="tag">WEB PROTOTYPE</span>
   </header>
@@ -24,16 +24,18 @@
         <div class="empty" id="empty">
           <div class="camera-icon">⌁</div>
           <strong>Camera preview</strong>
-          <span>Start the camera, then outline the floor with four taps.</span>
+          <span>Start the camera, then let AI find the floor or outline it manually.</span>
         </div>
         <div class="counter" id="counter">0 / 4 corners</div>
       </div>
       <div class="viewer-actions">
         <button id="startCamera" class="primary">Start camera</button>
-        <button id="setFloor" disabled>Set floor area</button>
+        <button id="autoDetect" disabled>Auto-detect floor</button>
+        <button id="stopTracking" disabled>Stop tracking</button>
+        <button id="setFloor" disabled>Manual corners</button>
         <button id="clearFloor" disabled>Clear area</button>
       </div>
-      <p class="hint" id="status" role="status">Allow camera access to begin. For best results, keep the phone still after selecting the floor.</p>
+      <p class="hint" id="status" role="status">Allow camera access to begin. AI floor detection refreshes as you move; manual corners remain fixed in the camera view.</p>
     </section>
 
     <aside class="controls">
@@ -74,12 +76,12 @@
         <h2>How to use</h2>
         <ol>
           <li>Start the rear camera.</li>
-          <li>Tap <b>Set floor area</b>.</li>
-          <li>Tap the four corners of the visible floor, clockwise.</li>
-          <li>Choose a preset or upload a texture.</li>
-          <li>Adjust strength, gloss, and scale.</li>
+          <li>Tap <b>Auto-detect floor</b> and wait for the AI model to load (first load may take a minute).</li>
+          <li>Move the camera slowly while keeping the floor visible; segmentation refreshes about once per second.</li>
+          <li>Or choose <b>Manual corners</b> and tap the four floor corners.</li>
+          <li>Choose a preset or upload a texture, then adjust strength, gloss, and scale.</li>
         </ol>
-        <p><b>Tip:</b> select the floor boundary, not the baseboards. The four-point overlay is fixed to the camera view, so reset it if you move the phone.</p>
+        <p><b>AI mode:</b> uses an on-device browser segmentation model after it downloads; performance varies by phone and lighting. It refreshes the visible floor mask, but is not true AR/world-locked tracking. Manual corners stay fixed to the camera view. Keep people, furniture, and walls out of the main view when possible.</p>
       </section>
     </aside>
   </main>
