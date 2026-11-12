@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111827">
+  <title>Epoxy Floor Visualizer</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Epoxy Floor Visualizer</h1>
+      <p>Live camera preview · choose a texture · outline the floor</p>
+    </div>
+    <span class="tag">WEB PROTOTYPE</span>
+  </header>
+
+  <main>
+    <section class="viewer-card">
+      <div class="viewer" id="viewer">
+        <video id="camera" autoplay muted playsinline></video>
+        <canvas id="overlay"></canvas>
+        <div class="empty" id="empty">
+          <div class="camera-icon">⌁</div>
+          <strong>Camera preview</strong>
+          <span>Start the camera, then outline the floor with four taps.</span>
+        </div>
+        <div class="counter" id="counter">0 / 4 corners</div>
+      </div>
+      <div class="viewer-actions">
+        <button id="startCamera" class="primary">Start camera</button>
+        <button id="setFloor" disabled>Set floor area</button>
+        <button id="clearFloor" disabled>Clear area</button>
+      </div>
+      <p class="hint" id="status" role="status">Allow camera access to begin. For best results, keep the phone still after selecting the floor.</p>
+    </section>
+
+    <aside class="controls">
+      <section class="panel">
+        <h2>Epoxy texture</h2>
+        <label for="preset">Preset finish</label>
+        <select id="preset">
+          <option value="silver">Silver metallic</option>
+          <option value="black">Black marble</option>
+          <option value="ocean">Ocean blue</option>
+          <option value="flake">Gray flake</option>
+          <option value="white">White pearl</option>
+        </select>
+        <label class="upload">
+          <span>Upload your own texture</span>
+          <input id="textureFile" type="file" accept="image/*">
+        </label>
+        <div class="swatch-row" id="swatches">
+          <button class="swatch selected" data-preset="silver" aria-label="Silver metallic"></button>
+          <button class="swatch black" data-preset="black" aria-label="Black marble"></button>
+          <button class="swatch ocean" data-preset="ocean" aria-label="Ocean blue"></button>
+          <button class="swatch flake" data-preset="flake" aria-label="Gray flake"></button>
+          <button class="swatch white" data-preset="white" aria-label="White pearl"></button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Appearance</h2>
+        <div class="range-line"><label for="strength">Texture strength</label><output id="strengthValue">82%</output></div>
+        <input id="strength" type="range" min="10" max="100" value="82">
+        <div class="range-line"><label for="gloss">Gloss</label><output id="glossValue">35%</output></div>
+        <input id="gloss" type="range" min="0" max="100" value="35">
+        <div class="range-line"><label for="scale">Texture scale</label><output id="scaleValue">1.0×</output></div>
+        <input id="scale" type="range" min="50" max="200" value="100">
+      </section>
+
+      <section class="panel instructions">
+        <h2>How to use</h2>
+        <ol>
+          <li>Start the rear camera.</li>
+          <li>Tap <b>Set floor area</b>.</li>
+          <li>Tap the four corners of the visible floor, clockwise.</li>
+          <li>Choose a preset or upload a texture.</li>
+          <li>Adjust strength, gloss, and scale.</li>
+        </ol>
+        <p><b>Tip:</b> select the floor boundary, not the baseboards. The four-point overlay is fixed to the camera view, so reset it if you move the phone.</p>
+      </section>
+    </aside>
+  </main>
+
+  <footer>Preview only. Actual epoxy color and reflectivity vary with lighting, preparation, and application.</footer>
+  <script src="app.js"></script>
+</body>
+</html>
