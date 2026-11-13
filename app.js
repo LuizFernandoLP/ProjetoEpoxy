@@ -21,9 +21,11 @@ let corners = [];
 let texture = makeTexture("silver");
 let textureName = "silver";
 let segmenter = null;
+let segmenterPromise = null;
 let trackingEnabled = false;
 let inferenceBusy = false;
 let trackingTimer = null;
+let trackingGeneration = 0;
 let autoQuad = null;
 let floorMaskCanvas = null;
 let lastDetection = 0;
@@ -168,26 +170,41 @@ function makeMaskAndQuad(mask){
 }
 async function loadFloorModel(){
   if(segmenter)return segmenter;
-  setStatus("Loading the floor-detection AI model. The first load may take a minute and downloads the model to your browser.");
-  const { pipeline, env } = await import("https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2");
-  env.allowLocalModels=false;
-  env.useBrowserCache=true;
   try{
-    segmenter=await pipeline("image-segmentation","Xenova/segformer-b0-finetuned-ade-512-512",{device:"webgpu"});
-  }catch(webgpuError){
-    console.warn("WebGPU unavailable; using CPU/WASM inference.",webgpuError);
-    segmenter=await pipeline("image-segmentation","Xenova/segformer-b0-finetuned-ade-512-512");
+    if(!segmenterPromise){
+      setStatus("Loading the floor-detection AI model. The first load may take a minute and downloads the model to your browser.");
+      segmenterPromise=(async()=>{
+        const { pipeline, env } = await import("https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2");
+        env.allowLocalModels=false;
+        env.useBrowserCache=true;
+        if(navigator.gpu){
+          try{
+            return await pipeline("image-segmentation","Xenova/segformer-b0-finetuned-ade-512-512",{device:"webgpu"});
+          }catch(webgpuError){
+            console.warn("WebGPU unavailable; using CPU/WASM inference.",webgpuError);
+          }
+        }
+        return pipeline("image-segmentation","Xenova/segformer-b0-finetuned-ade-512-512");
+      })();
+    }
+    segmenter=await segmenterPromise;
+    return segmenter;
+  }catch(err){
+    segmenterPromise=null;
+    throw err;
   }
-  return segmenter;
 }
-async function detectFloor(){
-  if(!trackingEnabled||inferenceBusy||!segmenter||video.readyState<2)return;
+async function detectFloor(generation){
+  if(!trackingEnabled||generation!==trackingGeneration||inferenceBusy||!segmenter||video.readyState<2)return;
   inferenceBusy=true;
   try{
     const frame=document.createElement("canvas");
-    frame.width=video.videoWidth;frame.height=video.videoHeight;
+    const frameScale=Math.min(1,640/Math.max(video.videoWidth,video.videoHeight));
+    frame.width=Math.max(1,Math.round(video.videoWidth*frameScale));
+    frame.height=Math.max(1,Math.round(video.videoHeight*frameScale));
     frame.getContext("2d",{willReadFrequently:true}).drawImage(video,0,0,frame.width,frame.height);
     const results=await segmenter(frame);
+    if(!trackingEnabled||generation!==trackingGeneration)return;
     const floor=results.find(item=>/\bfloor\b|flooring/i.test(item.label||""));
     if(!floor){setStatus("The model did not identify a floor in this view. Aim at a larger, well-lit floor area and try again.");return;}
     const result=makeMaskAndQuad(floor.mask);
@@ -196,25 +213,35 @@ async function detectFloor(){
     setStatus(`Tracking floor automatically (${Math.round((floor.score||0)*100)}% model confidence). Move slowly; detection refreshes about once per second.`);
     render();
   }catch(err){
-    console.error(err);setStatus(`Floor detection error: ${err.message}`);stopTracking();
+    console.error(err);
+    if(trackingEnabled&&generation===trackingGeneration){
+      setStatus(`Floor detection error: ${err.message}`);
+      stopTracking();
+    }
   }finally{inferenceBusy=false;}
 }
 async function startTracking(){
   if(!stream){setStatus("Start the camera first.");return;}
+  if(trackingEnabled)return;
   trackingEnabled=true;selecting=false;corners=[];autoQuad=null;floorMaskCanvas=null;lastDetection=0;
+  const generation=++trackingGeneration;
   autoBtn.disabled=true;stopBtn.disabled=false;setBtn.disabled=true;clearBtn.disabled=false;
   try{
     await loadFloorModel();
-    if(!trackingEnabled)return;
+    if(!trackingEnabled||generation!==trackingGeneration)return;
     setStatus("AI model ready. Looking for the floor… keep the floor clearly visible.");
-    await detectFloor();
-    trackingTimer=setInterval(detectFloor,1100);
+    await detectFloor(generation);
+    if(trackingEnabled&&generation===trackingGeneration){
+      if(trackingTimer)clearInterval(trackingTimer);
+      trackingTimer=setInterval(()=>detectFloor(generation),1100);
+    }
   }catch(err){
     console.error(err);setStatus(`Could not load floor detection: ${err.message}. You can still use the manual four-corner mode.`);stopTracking();
   }
 }
 function stopTracking(){
   trackingEnabled=false;
+  trackingGeneration++;
   if(trackingTimer){clearInterval(trackingTimer);trackingTimer=null;}
   autoBtn.disabled=false;stopBtn.disabled=true;setBtn.disabled=!stream;render();
 }
