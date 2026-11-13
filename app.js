@@ -20,12 +20,16 @@ let selecting = false;
 let corners = [];
 let texture = makeTexture("silver");
 let textureName = "silver";
+let textureTile = null;
+let textureTileScale = null;
+let textureTileSource = null;
 let segmenter = null;
 let segmenterPromise = null;
 let trackingEnabled = false;
 let inferenceBusy = false;
 let trackingTimer = null;
 let trackingGeneration = 0;
+let inferenceCanvas = document.createElement("canvas");
 let autoQuad = null;
 let floorMaskCanvas = null;
 let lastDetection = 0;
@@ -78,6 +82,22 @@ function setTexture(kind){
   document.querySelectorAll(".swatch").forEach(b=>b.classList.toggle("selected",b.dataset.preset===kind));
   render();
 }
+function getTextureTile(s){
+  const tileSize=Math.max(900,Math.round(900*s));
+  if(!textureTile||textureTile.width!==tileSize||textureTileSource!==texture||textureTileScale!==s){
+    textureTile=textureTile||document.createElement("canvas");
+    textureTile.width=tileSize;textureTile.height=tileSize;
+    const tileContext=textureTile.getContext("2d");
+    tileContext.clearRect(0,0,tileSize,tileSize);
+    for(let y=0;y<tileSize;y+=texture.height*s){
+      for(let x=0;x<tileSize;x+=texture.width*s){
+        tileContext.drawImage(texture,x,y,texture.width*s,texture.height*s);
+      }
+    }
+    textureTileSource=texture;textureTileScale=s;
+  }
+  return textureTile;
+}
 function affineTriangle(image, src, dst){
   const [s0,s1,s2]=src,[d0,d1,d2]=dst;
   const den=s0.x*(s1.y-s2.y)+s1.x*(s2.y-s0.y)+s2.x*(s0.y-s1.y);
@@ -94,9 +114,7 @@ function affineTriangle(image, src, dst){
 function drawTextureInQuad(quad,w,h,maskCanvas=null){
   const strengthValue=Number(strength.value)/100;
   const s=Number(scale.value)/100;
-  const tile=document.createElement("canvas");tile.width=Math.max(900,Math.round(900*s));tile.height=tile.width;
-  const tctx=tile.getContext("2d");
-  for(let y=0;y<tile.height;y+=texture.height*s)for(let x=0;x<tile.width;x+=texture.width*s)tctx.drawImage(texture,x,y,texture.width*s,texture.height*s);
+  const tile=getTextureTile(s);
   ctx.save();ctx.globalAlpha=strengthValue;
   affineTriangle(tile,[{x:0,y:0},{x:tile.width,y:0},{x:tile.width,y:tile.height}],[quad[0],quad[1],quad[2]]);
   affineTriangle(tile,[{x:0,y:0},{x:tile.width,y:tile.height},{x:0,y:tile.height}],[quad[0],quad[2],quad[3]]);
@@ -132,15 +150,18 @@ function render(){
 }
 function makeMaskAndQuad(mask){
   const mw=mask.width,mh=mask.height,data=mask.data;
-  if(!mw||!mh||!data)throw new Error("The segmentation model returned an empty mask.");
+  if(!mw||!mh||!data||data.length%(mw*mh)!==0)throw new Error("The segmentation model returned an invalid mask.");
   const channels=data.length/(mw*mh);
+  let maxValue=0;
+  for(let i=0;i<data.length;i++)maxValue=Math.max(maxValue,data[i]);
+  const threshold=maxValue<=1 ? .5 : 80;
   const binary=new Uint8ClampedArray(mw*mh*4);
   let minX=mw,minY=mh,maxX=0,maxY=0,count=0;
   const rowLeft=new Int32Array(mh).fill(mw),rowRight=new Int32Array(mh).fill(-1),rowCount=new Int32Array(mh);
   for(let y=0;y<mh;y++)for(let x=0;x<mw;x++){
     const idx=(y*mw+x)*channels;
     const value=channels>=3 ? Math.max(data[idx],data[idx+1],data[idx+2]) : data[idx];
-    const on=value>80;
+    const on=value>threshold;
     if(on){
       const p=(y*mw+x)*4;binary[p]=255;binary[p+1]=255;binary[p+2]=255;binary[p+3]=255;
       minX=Math.min(minX,x);maxX=Math.max(maxX,x);minY=Math.min(minY,y);maxY=Math.max(maxY,y);count++;
@@ -179,12 +200,12 @@ async function loadFloorModel(){
         env.useBrowserCache=true;
         if(navigator.gpu){
           try{
-            return await pipeline("image-segmentation","Xenova/segformer-b0-finetuned-ade-512-512",{device:"webgpu"});
+            return await pipeline("image-segmentation","Xenova/segformer-b0-finetuned-ade-512-512",{device:"webgpu",dtype:"fp16"});
           }catch(webgpuError){
             console.warn("WebGPU unavailable; using CPU/WASM inference.",webgpuError);
           }
         }
-        return pipeline("image-segmentation","Xenova/segformer-b0-finetuned-ade-512-512");
+        return pipeline("image-segmentation","Xenova/segformer-b0-finetuned-ade-512-512",{dtype:"q8"});
       })();
     }
     segmenter=await segmenterPromise;
@@ -195,15 +216,19 @@ async function loadFloorModel(){
   }
 }
 async function detectFloor(generation){
-  if(!trackingEnabled||generation!==trackingGeneration||inferenceBusy||!segmenter||video.readyState<2)return;
+  if(!trackingEnabled||generation!==trackingGeneration||!segmenter||video.readyState<2)return;
+  if(inferenceBusy){
+    trackingTimer=setTimeout(()=>detectFloor(generation),300);
+    return;
+  }
   inferenceBusy=true;
+  let results;
   try{
-    const frame=document.createElement("canvas");
-    const frameScale=Math.min(1,640/Math.max(video.videoWidth,video.videoHeight));
-    frame.width=Math.max(1,Math.round(video.videoWidth*frameScale));
-    frame.height=Math.max(1,Math.round(video.videoHeight*frameScale));
-    frame.getContext("2d",{willReadFrequently:true}).drawImage(video,0,0,frame.width,frame.height);
-    const results=await segmenter(frame);
+    const frameScale=Math.min(1,512/Math.max(video.videoWidth,video.videoHeight));
+    inferenceCanvas.width=Math.max(1,Math.round(video.videoWidth*frameScale));
+    inferenceCanvas.height=Math.max(1,Math.round(video.videoHeight*frameScale));
+    inferenceCanvas.getContext("2d",{willReadFrequently:true}).drawImage(video,0,0,inferenceCanvas.width,inferenceCanvas.height);
+    results=await segmenter(inferenceCanvas);
     if(!trackingEnabled||generation!==trackingGeneration)return;
     const floor=results.find(item=>/\bfloor\b|flooring/i.test(item.label||""));
     if(!floor){setStatus("The model did not identify a floor in this view. Aim at a larger, well-lit floor area and try again.");return;}
@@ -218,7 +243,13 @@ async function detectFloor(generation){
       setStatus(`Floor detection error: ${err.message}`);
       stopTracking();
     }
-  }finally{inferenceBusy=false;}
+  }finally{
+    results=null;
+    inferenceBusy=false;
+    if(trackingEnabled&&generation===trackingGeneration){
+      trackingTimer=setTimeout(()=>detectFloor(generation),1800);
+    }
+  }
 }
 async function startTracking(){
   if(!stream){setStatus("Start the camera first.");return;}
@@ -231,10 +262,6 @@ async function startTracking(){
     if(!trackingEnabled||generation!==trackingGeneration)return;
     setStatus("AI model ready. Looking for the floor… keep the floor clearly visible.");
     await detectFloor(generation);
-    if(trackingEnabled&&generation===trackingGeneration){
-      if(trackingTimer)clearInterval(trackingTimer);
-      trackingTimer=setInterval(()=>detectFloor(generation),1100);
-    }
   }catch(err){
     console.error(err);setStatus(`Could not load floor detection: ${err.message}. You can still use the manual four-corner mode.`);stopTracking();
   }
@@ -242,12 +269,12 @@ async function startTracking(){
 function stopTracking(){
   trackingEnabled=false;
   trackingGeneration++;
-  if(trackingTimer){clearInterval(trackingTimer);trackingTimer=null;}
+  if(trackingTimer){clearTimeout(trackingTimer);trackingTimer=null;}
   autoBtn.disabled=false;stopBtn.disabled=true;setBtn.disabled=!stream;render();
 }
 async function startCamera(){
   try{
-    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080}},audio:false});
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720},frameRate:{ideal:24,max:30}},audio:false});
     video.srcObject=stream;await video.play();emptyEl.style.display="none";
     startBtn.textContent="Camera running";startBtn.disabled=true;setBtn.disabled=false;clearBtn.disabled=false;autoBtn.disabled=false;
     resizeCanvas();setStatus("Camera ready. Use Auto-detect floor for AI segmentation, or select the floor manually.");
@@ -269,7 +296,7 @@ document.querySelectorAll(".swatch").forEach(b=>b.addEventListener("click",()=>{
 fileInput.addEventListener("change",e=>{
   const file=e.target.files?.[0];if(!file)return;
   const url=URL.createObjectURL(file),img=new Image();
-  img.onload=()=>{texture=img;textureName="custom";render();setStatus(`Loaded ${file.name}.`);URL.revokeObjectURL(url);};
+  img.onload=()=>{texture=img;textureName="custom";textureTileSource=null;render();setStatus(`Loaded ${file.name}.`);URL.revokeObjectURL(url);};
   img.onerror=()=>setStatus("That image could not be loaded.");img.src=url;
 });
 [strength,gloss,scale].forEach(el=>el.addEventListener("input",()=>{
