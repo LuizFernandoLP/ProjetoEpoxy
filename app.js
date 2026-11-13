@@ -198,14 +198,12 @@ async function loadFloorModel(){
         const { pipeline, env } = await import("https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2");
         env.allowLocalModels=false;
         env.useBrowserCache=true;
-        if(navigator.gpu){
-          try{
-            return await pipeline("image-segmentation","Xenova/segformer-b0-finetuned-ade-512-512",{device:"webgpu",dtype:"fp16"});
-          }catch(webgpuError){
-            console.warn("WebGPU unavailable; using CPU/WASM inference.",webgpuError);
-          }
+        try{
+          return await pipeline("image-segmentation","Xenova/segformer-b0-finetuned-ade-512-512",{device:"webgpu"});
+        }catch(webgpuError){
+          console.warn("WebGPU unavailable; using CPU/WASM inference.",webgpuError);
         }
-        return pipeline("image-segmentation","Xenova/segformer-b0-finetuned-ade-512-512",{dtype:"q8"});
+        return pipeline("image-segmentation","Xenova/segformer-b0-finetuned-ade-512-512");
       })();
     }
     segmenter=await segmenterPromise;
@@ -216,7 +214,11 @@ async function loadFloorModel(){
   }
 }
 async function detectFloor(generation){
-  if(!trackingEnabled||generation!==trackingGeneration||!segmenter||video.readyState<2)return;
+  if(!trackingEnabled||generation!==trackingGeneration||!segmenter)return;
+  if(video.readyState<2){
+    trackingTimer=setTimeout(()=>detectFloor(generation),300);
+    return;
+  }
   if(inferenceBusy){
     trackingTimer=setTimeout(()=>detectFloor(generation),300);
     return;
@@ -224,7 +226,7 @@ async function detectFloor(generation){
   inferenceBusy=true;
   let results;
   try{
-    const frameScale=Math.min(1,512/Math.max(video.videoWidth,video.videoHeight));
+    const frameScale=Math.min(1,640/Math.max(video.videoWidth,video.videoHeight));
     inferenceCanvas.width=Math.max(1,Math.round(video.videoWidth*frameScale));
     inferenceCanvas.height=Math.max(1,Math.round(video.videoHeight*frameScale));
     inferenceCanvas.getContext("2d",{willReadFrequently:true}).drawImage(video,0,0,inferenceCanvas.width,inferenceCanvas.height);
@@ -235,7 +237,7 @@ async function detectFloor(generation){
     const result=makeMaskAndQuad(floor.mask);
     if(!result){setStatus("Floor detected weakly. Move back a little, include more of the floor, and keep the camera steady for a moment.");return;}
     autoQuad=result.quad;floorMaskCanvas=result.maskCanvas;lastDetection=Date.now();
-    setStatus(`Tracking floor automatically (${Math.round((floor.score||0)*100)}% model confidence). Move slowly; detection refreshes about once per second.`);
+    setStatus(`Tracking floor automatically (${Math.round((floor.score||0)*100)}% model confidence). Move slowly; detection refreshes about every two seconds.`);
     render();
   }catch(err){
     console.error(err);
